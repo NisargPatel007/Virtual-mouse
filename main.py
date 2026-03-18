@@ -6,9 +6,21 @@ Left hand   → left click (thumb+index pinch)
               right click (thumb+middle pinch)
               scroll (index+middle finger extended, move up/down)
 
-PowerPoint mode (cross gesture to toggle):
-  • Floating toolbar triggered by both index fingers up
-  • Passive gestures: thumbs up/down (slides), pinch expand/contract (zoom)
+PowerPoint mode (two fists to toggle):
+  [How to enter/exit: Make a FIST with BOTH hands and hold for 2 seconds]
+  
+  EASY MOVES / GESTURES DURING PRESENTATION:
+  • Next Slide         → Thumbs UP (right hand)
+  • Previous Slide     → Thumbs DOWN (right hand)
+  • Zoom In / Out      → Extend right index finger, then pinch/expand thumb
+  • Floating Toolbar   → Both index fingers pointing up (hold for 0.3s)
+    ↳ The toolbar gives you on-screen buttons for:
+      - Start Presentation (F5)
+      - Stop Presentation (ESC)
+      - Draw Pen (Ctrl+P)
+      - Laser Pointer (Ctrl+L)
+      - Next/Prev and Zoom+/-
+    ↳ Point to a button and pinch your right index+thumb to click it!
 
 Optimised for low latency:
   • Threaded camera capture (no blocking on I/O)
@@ -22,6 +34,7 @@ import math
 import time
 import ctypes
 import threading
+import tkinter as tk
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional, Callable, List
@@ -152,9 +165,8 @@ SCROLL_SCALE     = 3000          # multiplier for scroll sensitivity
 MARGIN           = 0.08          # edge margin for cursor mapping
 
 # PowerPoint mode parameters
-PPT_ENTER_HOLD       = 2.0      # seconds to hold cross gesture to ENTER ppt mode
-PPT_EXIT_HOLD        = 3.0      # seconds to hold cross gesture to EXIT ppt mode
-CROSS_WRIST_DIST     = 0.15     # max wrist distance for cross gesture
+PPT_ENTER_HOLD       = 2.0      # seconds to hold both fists to ENTER ppt mode
+PPT_EXIT_HOLD        = 3.0      # seconds to hold both fists to EXIT ppt mode
 PPT_SLIDE_COOLDOWN   = 0.5      # seconds between slide changes
 
 # Toolbar parameters
@@ -169,198 +181,138 @@ CAM_W, CAM_H = 640, 480
 # ──────────────────────────────────────────────────────────────
 # Toolbar system
 # ──────────────────────────────────────────────────────────────
-@dataclass
-class ToolbarButton:
-    """A single toolbar button with position, icon, and action."""
-    name: str
-    icon_char: str
-    x: int = 0
-    y: int = 0
-    width: int = 70
-    height: int = 70
-    action: Optional[Callable] = None
-    color: tuple = (255, 180, 50)       # accent colour per button
-
-
 class ToolbarManager:
-    """Renders and manages a floating PPT toolbar on the camera preview."""
+    """Renders and manages a floating PPT toolbar ALWAYS ON TOP using Tkinter."""
 
     def __init__(self):
-        self.visible: bool = False
-        self.hovered_index: int = -1
+        self.visible = False
+        self.hovered_index = -1
 
-        BTN_W, BTN_H = 70, 70
-        PAD = 12
+        self.root = tk.Tk()
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.attributes("-transparentcolor", "#000001")
+        self.root.config(bg="#000001")
+
+        BTN_W, BTN_H = 80, 80
+        PAD = 15
         COLS = 4
 
-        # (name, icon_char, accent_color)
+        # (name, icon_char, color_hex)
         button_defs = [
-            ("Next",   ">>",  (100, 220, 100)),
-            ("Prev",   "<<",  (100, 220, 100)),
-            ("Zoom+",  " + ", (80,  180, 255)),
-            ("Zoom-",  " - ", (80,  180, 255)),
-            ("Start",  "F5",  (100, 100, 255)),
-            ("Stop",   "ESC", (100, 100, 255)),
-            ("Draw",   "P",   (255, 200, 80)),
-            ("Laser",  "L",   (200, 100, 255)),
+            ("Next",   ">>",  "#64dc64"),
+            ("Prev",   "<<",  "#64dc64"),
+            ("Zoom+",  " + ", "#50b4ff"),
+            ("Zoom-",  " - ", "#50b4ff"),
+            ("Start",  "F5",  "#6464ff"),
+            ("Stop",   "ESC", "#6464ff"),
+            ("Draw",   "P",   "#ffc850"),
+            ("Laser",  "L",   "#c864ff"),
         ]
 
-        self.buttons: List[ToolbarButton] = []
+        self.buttons = []
         total_w = COLS * BTN_W + (COLS - 1) * PAD
-        total_rows = (len(button_defs) + COLS - 1) // COLS
+        total_rows = ((len(button_defs) + COLS - 1) // COLS)
         total_h = total_rows * BTN_H + (total_rows - 1) * PAD
-        start_x = (CAM_W - total_w) // 2
-        start_y = (CAM_H - total_h) // 2
+        
+        self.start_x = (screen_w - total_w) // 2
+        self.start_y = (screen_h - total_h) // 2
+
+        self.root.geometry(f"{total_w}x{total_h}+{self.start_x}+{self.start_y}")
+        self.canvas = tk.Canvas(self.root, width=total_w, height=total_h, bg="#000001", highlightthickness=0)
+        self.canvas.pack()
 
         for i, (name, icon, color) in enumerate(button_defs):
             row, col = divmod(i, COLS)
-            x = start_x + col * (BTN_W + PAD)
-            y = start_y + row * (BTN_H + PAD)
-            self.buttons.append(
-                ToolbarButton(name, icon, x, y, BTN_W, BTN_H, color=color)
-            )
+            cx = col * (BTN_W + PAD)
+            cy = row * (BTN_H + PAD)
+            sx = self.start_x + cx
+            sy = self.start_y + cy
+            
+            bg = "#333333"
+            fg = "#aaaaaa"
+            rect_id = self.canvas.create_rectangle(cx, cy, cx+BTN_W, cy+BTN_H, fill=bg, outline="#777777", width=2)
+            icon_id = self.canvas.create_text(cx+BTN_W//2, cy+BTN_H//2 - 12, text=icon, fill=fg, font=("Arial", 20, "bold"))
+            name_id = self.canvas.create_text(cx+BTN_W//2, cy+BTN_H//2 + 20, text=name, fill=fg, font=("Arial", 10))
 
-        # Assign actions (deferred so press_key / ctrl_press_key are in scope)
-        self.buttons[0].action = lambda: press_key(VK_RIGHT)          # Next
-        self.buttons[1].action = lambda: press_key(VK_LEFT)           # Prev
-        self.buttons[2].action = lambda: ctrl_press_key(VK_OEM_PLUS)  # Zoom+
-        self.buttons[3].action = lambda: ctrl_press_key(VK_OEM_MINUS) # Zoom-
-        self.buttons[4].action = lambda: press_key(VK_F5)             # Start
-        self.buttons[5].action = lambda: press_key(VK_ESCAPE)         # Stop
-        self.buttons[6].action = lambda: ctrl_press_key(ord("P"))     # Draw
-        self.buttons[7].action = lambda: ctrl_press_key(ord("L"))     # Laser
+            self.buttons.append({
+                "name": name, "icon": icon, "color": color,
+                "cx": cx, "cy": cy, "sx": sx, "sy": sy, 
+                "w": BTN_W, "h": BTN_H, "action": None,
+                "ids": (rect_id, icon_id, name_id)
+            })
 
-        # Background rect dimensions (with padding around all buttons)
-        self.bg_x = start_x - PAD
-        self.bg_y = start_y - PAD - 28       # extra top space for title
-        self.bg_w = total_w + 2 * PAD
-        self.bg_h = total_h + 2 * PAD + 28
+        self.last_hovered_index = -1
+        self.last_update_time = 0.0
 
-    # ── visibility ──────────────────────────────────────────
+        self.buttons[0]["action"] = lambda: press_key(VK_RIGHT)
+        self.buttons[1]["action"] = lambda: press_key(VK_LEFT)
+        self.buttons[2]["action"] = lambda: ctrl_press_key(VK_OEM_PLUS)
+        self.buttons[3]["action"] = lambda: ctrl_press_key(VK_OEM_MINUS)
+        self.buttons[4]["action"] = lambda: press_key(VK_F5)
+        self.buttons[5]["action"] = lambda: press_key(VK_ESCAPE)
+        self.buttons[6]["action"] = lambda: ctrl_press_key(ord("P"))
+        self.buttons[7]["action"] = lambda: ctrl_press_key(ord("L"))
+
+        self.root.withdraw()
 
     def toggle(self):
-        self.visible = not self.visible
-        self.hovered_index = -1
+        if self.visible: self.hide()
+        else: self.show()
 
     def show(self):
         self.visible = True
         self.hovered_index = -1
+        self.root.deiconify()
+        self.root.attributes("-topmost", True)
 
     def hide(self):
         self.visible = False
         self.hovered_index = -1
-
-    # ── hover detection ─────────────────────────────────────
+        self.root.withdraw()
 
     def get_hovered_button(self, px: int, py: int) -> int:
-        """px, py are pixel coordinates in the camera frame (640×480)."""
+        """px, py are FULL SCREEN pixel coordinates."""
         for i, b in enumerate(self.buttons):
-            if b.x <= px <= b.x + b.width and b.y <= py <= b.y + b.height:
+            if b["sx"] <= px <= b["sx"] + b["w"] and b["sy"] <= py <= b["sy"] + b["h"]:
                 self.hovered_index = i
                 return i
         self.hovered_index = -1
         return -1
 
-    # ── selection ───────────────────────────────────────────
+    def select(self):
+        if 0 <= self.hovered_index < len(self.buttons):
+            btn = self.buttons[self.hovered_index]
+            if btn["action"]: btn["action"]()
+            self.hide()
+            return btn["name"]
+        return None
 
-    def select(self) -> Optional[str]:
-        """Fire the hovered button's action.  Returns button name or None."""
-        if not (0 <= self.hovered_index < len(self.buttons)):
-            return None
-        btn = self.buttons[self.hovered_index]
-        if btn.action:
-            btn.action()
-        name = btn.name
-        self.hide()
-        return name
+    def update(self):
+        """Draw toolbar on screen and pump Tk events. Does not block."""
+        try:
+            now = time.monotonic()
+            if self.visible and self.hovered_index != self.last_hovered_index:
+                for i, btn in enumerate(self.buttons):
+                    is_hovered = (i == self.hovered_index)
+                    bg = btn["color"] if is_hovered else "#333333"
+                    fg = "#ffffff" if is_hovered else "#aaaaaa"
+                    outline = "#ffffff" if is_hovered else "#777777"
+                    line_w = 4 if is_hovered else 2
+                    
+                    rect_id, icon_id, name_id = btn["ids"]
+                    self.canvas.itemconfigure(rect_id, fill=bg, outline=outline, width=line_w)
+                    self.canvas.itemconfigure(icon_id, fill=fg)
+                    self.canvas.itemconfigure(name_id, fill=fg)
+                    
+                self.last_hovered_index = self.hovered_index
 
-    # ── rendering ───────────────────────────────────────────
-
-    def render(self, frame):
-        """Draw the toolbar overlay onto *frame* (mutates in place)."""
-        if not self.visible:
-            return
-
-        overlay = frame.copy()
-
-        # Semi-transparent dark background
-        cv2.rectangle(
-            overlay,
-            (self.bg_x, self.bg_y),
-            (self.bg_x + self.bg_w, self.bg_y + self.bg_h),
-            (25, 25, 25), -1,
-        )
-        cv2.addWeighted(overlay, 0.82, frame, 0.18, 0, frame)
-
-        # Thin border
-        cv2.rectangle(
-            frame,
-            (self.bg_x, self.bg_y),
-            (self.bg_x + self.bg_w, self.bg_y + self.bg_h),
-            (70, 70, 70), 1,
-        )
-
-        # Title
-        cv2.putText(
-            frame, "PPT Toolbar",
-            (self.bg_x + 10, self.bg_y + 20),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 160), 1,
-        )
-
-        # Buttons
-        for i, btn in enumerate(self.buttons):
-            is_hovered = (i == self.hovered_index)
-
-            if is_hovered:
-                # Highlighted: semi-transparent accent fill
-                hl = frame.copy()
-                cv2.rectangle(
-                    hl, (btn.x, btn.y),
-                    (btn.x + btn.width, btn.y + btn.height),
-                    btn.color, -1,
-                )
-                cv2.addWeighted(hl, 0.45, frame, 0.55, 0, frame)
-                text_col = (255, 255, 255)
-                border_col = btn.color
-            else:
-                # Normal dark button
-                cv2.rectangle(
-                    frame, (btn.x, btn.y),
-                    (btn.x + btn.width, btn.y + btn.height),
-                    (50, 50, 50), -1,
-                )
-                text_col = (180, 180, 180)
-                border_col = (70, 70, 70)
-
-            # Border
-            cv2.rectangle(
-                frame, (btn.x, btn.y),
-                (btn.x + btn.width, btn.y + btn.height),
-                border_col, 1,
-            )
-
-            # Icon (centred, upper half of button)
-            isz = cv2.getTextSize(
-                btn.icon_char, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2
-            )[0]
-            ix = btn.x + (btn.width - isz[0]) // 2
-            iy = btn.y + 32
-            cv2.putText(
-                frame, btn.icon_char, (ix, iy),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, text_col, 2,
-            )
-
-            # Label (centred, lower half of button)
-            lsz = cv2.getTextSize(
-                btn.name, cv2.FONT_HERSHEY_SIMPLEX, 0.32, 1
-            )[0]
-            lx = btn.x + (btn.width - lsz[0]) // 2
-            ly = btn.y + btn.height - 10
-            cv2.putText(
-                frame, btn.name, (lx, ly),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.32, text_col, 1,
-            )
-
+            # Limit Tkinter updates to ~90 FPS to preserve CPU for MediaPipe
+            if now - self.last_update_time > 0.011:
+                self.root.update()
+                self.last_update_time = now
+        except:
+            pass
 
 # ──────────────────────────────────────────────────────────────
 # State
@@ -465,20 +417,11 @@ def get_pinch_distance(hand):
     return distance(hand[4], hand[8])
 
 
-def detect_cross_gesture(right_hand, left_hand):
-    """
-    Return True if both hands form a cross / X sign:
-    wrists are close together and the right wrist has crossed
-    to the LEFT side of the left wrist (arms overlapping).
-    """
+def detect_two_fists(right_hand, left_hand):
+    """Return True if both hands are forming a closed fist."""
     if right_hand is None or left_hand is None:
         return False
-    r_wrist = right_hand[0]
-    l_wrist = left_hand[0]
-    wrist_dist = distance(r_wrist, l_wrist)
-    # Right wrist must be on the left side of left wrist (crossed)
-    crossed = r_wrist.x < l_wrist.x
-    return crossed and wrist_dist < CROSS_WRIST_DIST
+    return is_fist(right_hand) and is_fist(left_hand)
 
 
 def classify_hands(result):
@@ -541,9 +484,9 @@ try:
 
         now = time.monotonic()
 
-        # ──────── CROSS GESTURE (✕) → TOGGLE PPT MODE ────────
+        # ──────── BOTH FISTS → TOGGLE PPT MODE ────────
         hold_needed = PPT_EXIT_HOLD if ppt_mode else PPT_ENTER_HOLD
-        if detect_cross_gesture(right_hand, left_hand):
+        if detect_two_fists(right_hand, left_hand):
             if ppt_activation_start == 0.0:
                 ppt_activation_start = now
             elif now - ppt_activation_start >= hold_needed:
@@ -584,9 +527,11 @@ try:
             if toolbar.visible:
                 if right_hand is not None:
                     idx_tip = right_hand[8]
-                    px = int(idx_tip.x * CAM_W)
-                    py = int(idx_tip.y * CAM_H)
-                    toolbar.get_hovered_button(px, py)
+                    raw_x, raw_y = map_to_screen(idx_tip.x, idx_tip.y)
+                    smooth_x += SMOOTHING * (raw_x - smooth_x)
+                    smooth_y += SMOOTHING * (raw_y - smooth_y)
+                    move_cursor(smooth_x, smooth_y)
+                    toolbar.get_hovered_button(int(smooth_x), int(smooth_y))
 
                     # Select with pinch (thumb + index close)
                     if get_pinch_distance(right_hand) < PINCH_THRESHOLD:
@@ -683,20 +628,31 @@ try:
                     prev_scroll_y = 0.0
                     scroll_active = False
 
+        # Update Tkinter toolbar separately (now an overlay on the screen)
+        toolbar.update()
+
         # ── Preview window (optional) ──
         if SHOW_PREVIEW:
-            # Render toolbar overlay FIRST (behind status text)
-            toolbar.render(frame)
+            pass # Tkinter toolbar now updates independently via root.update()
 
-            # Draw lightweight status text
+            # Draw Prominent Mode Indicator
+            mode_text = "MODE: POWERPOINT" if ppt_mode else "MODE: DEFAULT (MOUSE)"
+            mode_col = (0, 255, 255) if ppt_mode else (0, 255, 0)
+            
+            tw, th = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+            cx = (frame.shape[1] - tw) // 2
+            cv2.rectangle(frame, (cx - 10, 10), (cx + tw + 10, 10 + th + 15), (0, 0, 0), -1)
+            cv2.putText(frame, mode_text, (cx, 10 + th + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, mode_col, 2)
+
+            # Draw lightweight status text for hands
             status = []
             if ppt_mode:
-                status.append("MODE: PPT")
                 if toolbar.visible:
                     status.append("TOOLBAR OPEN")
             else:
                 if right_hand is not None:
-                    status.append("R: " + ("FIST" if is_fist(right_hand) else "MOVE"))
+                    status.append("R: " + ("FIST (FREEZE)" if is_fist(right_hand) else "MOVE"))
                 if left_hand is not None:
                     status.append("L: ACTIVE")
 
@@ -705,14 +661,14 @@ try:
                 cv2.putText(frame, txt, (10, 30 + i * 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2)
 
-            # Cross-gesture hold indicator
+            # Two-fists hold indicator
             if ppt_activation_start > 0:
                 progress = min(1.0, (now - ppt_activation_start) / hold_needed)
                 bar_w = int(200 * progress)
                 cv2.rectangle(frame, (10, 70 + len(status) * 30),
                               (10 + bar_w, 90 + len(status) * 30), (0, 255, 255), -1)
                 secs_left = max(0, hold_needed - (now - ppt_activation_start))
-                label = f"Cross held... {secs_left:.1f}s"
+                label = f"Both Fists held... {secs_left:.1f}s"
                 cv2.putText(frame, label,
                             (10, 65 + len(status) * 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
